@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en" class="antialiased">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner Verification - MVMN</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Montserrat:wght@400;700;800&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } }
+        }
+
+        if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark')
+        } else {
+            document.documentElement.classList.remove('dark')
+        }
+    </script>
+
+    <style>
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-5px); }
+            40%, 80% { transform: translateX(5px); }
+        }
+        .shake { animation: shake 0.4s ease-in-out; }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+        }
+        .dark .glass-card { background: rgba(15, 23, 42, 0.85); }
+
+        /* Clean up html5-qrcode default styling */
+        #reader {
+            border: none !important;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            background: #0f172a;
+        }
+        #reader video { object-fit: cover; border-radius: 0.75rem; }
+        #reader__dashboard_section_csr span, #reader__dashboard_section_swaplink { display: none !important; }
+    </style>
+</head>
+
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 transition-colors duration-300 min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+
+    <!-- Decorative blobs -->
+    <div class="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-400/20 dark:bg-blue-600/10 rounded-full blur-3xl z-0"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-emerald-400/20 dark:bg-emerald-600/10 rounded-full blur-3xl z-0"></div>
+
+    <div id="toast-container" class="fixed top-6 right-6 z-[99999] flex flex-col gap-3 w-full max-w-sm pointer-events-none"></div>
+
+    <!-- ============================================== -->
+    <!-- VIEW 1: PIN AUTHENTICATION                     -->
+    <!-- ============================================== -->
+    <div id="authView" class="glass-card w-full max-w-sm p-8 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 z-10 transform transition-all">
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-extrabold text-blue-800 dark:text-blue-500 font-['Montserrat'] tracking-tight">SCANNER LOGIN</h1>
+            <p class="text-sm text-slate-500 mt-2">Enter the 6-digit access pin to continue.</p>
+        </div>
+
+        <div id="loginError" class="hidden mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl flex items-center gap-3 text-red-600 dark:text-red-400 text-sm font-medium transition-all">
+            <i data-lucide="alert-triangle" class="w-5 h-5 shrink-0"></i>
+            <span id="loginErrorText">Incorrect PIN.</span>
+        </div>
+
+        <form onsubmit="verifyPin(event)">
+            <input type="password" id="pinInput" maxlength="6" pattern="\d{6}" placeholder="••••••" required
+                class="w-full text-center text-3xl tracking-[0.5em] py-4 border border-slate-200 dark:border-slate-700 rounded-xl bg-white/50 dark:bg-slate-900/50 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6 font-mono transition-all">
+            
+            <button type="submit" id="authBtn" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-md shadow-blue-600/20 transition-all flex items-center justify-center gap-2">
+                <span>Unlock Scanner</span> <i data-lucide="unlock" class="w-4 h-4"></i>
+            </button>
+        </form>
+    </div>
+
+    <!-- ============================================== -->
+    <!-- VIEW 2: SCANNER DASHBOARD                      -->
+    <!-- ============================================== -->
+    <div id="scannerView" class="hidden glass-card w-full max-w-lg p-6 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 z-10 flex flex-col transition-all">
+        
+        <div class="text-center mb-6 border-b border-slate-200 dark:border-slate-700 pb-4">
+            <h1 class="text-2xl font-extrabold text-blue-800 dark:text-blue-500 font-['Montserrat'] tracking-tight">ADMIT VERIFIER</h1>
+            <div id="dbStatus" class="flex items-center justify-center gap-1.5 mt-2 text-xs font-bold text-amber-500 dark:text-amber-400">
+                <i data-lucide="loader-2" class="w-4 h-4 spin"></i> Downloading Database...
+            </div>
+        </div>
+
+        <div class="flex items-center justify-center gap-4 mb-6 bg-slate-100 dark:bg-slate-800/50 p-3 rounded-2xl border border-slate-200 dark:border-slate-700">
+            <span class="text-sm font-bold text-blue-600 dark:text-blue-400 transition-colors" id="lblHY">Half-Yearly</span>
+            <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="examToggle" class="sr-only peer" onchange="updateToggleUI()">
+                <div class="w-14 h-7 bg-blue-500 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-purple-500 shadow-inner"></div>
+            </label>
+            <span class="text-sm font-bold text-slate-400 dark:text-slate-500 transition-colors" id="lblFY">Final Year</span>
+        </div>
+
+        <div class="flex gap-3 mb-6">
+            <button onclick="initScanner()" id="camBtn" disabled class="flex-1 py-3 bg-slate-800 dark:bg-slate-100 opacity-50 cursor-not-allowed hover:bg-slate-900 dark:hover:bg-white text-white dark:text-slate-900 rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2">
+                <i data-lucide="camera" class="w-5 h-5"></i> Start Camera
+            </button>
+            <label for="qr-input-file" class="flex-1 py-3 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl font-bold shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer border border-slate-300 dark:border-slate-600">
+                <i data-lucide="image" class="w-5 h-5"></i> Scan Image
+            </label>
+            <input type="file" id="qr-input-file" accept="image/*" style="display:none">
+        </div>
+
+        <div id="reader" class="w-full aspect-video shadow-inner flex items-center justify-center mb-2">
+            <span class="text-slate-400 text-sm font-medium flex flex-col items-center"><i data-lucide="scan" class="w-8 h-8 mb-2 opacity-50"></i>Camera Offline</span>
+        </div>
+
+        <div id="resultPanel" class="hidden mt-4 p-5 rounded-2xl border-2 transition-all">
+            <div class="flex items-center gap-3 border-b pb-3 mb-3 border-emerald-200 dark:border-emerald-800" id="resultHeader"></div>
+            <div id="studentDetails" class="text-sm space-y-2 text-slate-700 dark:text-slate-300"></div>
+            <button onclick="resetScanner()" class="w-full mt-5 py-2.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-white rounded-xl font-bold transition-all border border-slate-300 dark:border-slate-600">
+                Scan Next Student
+            </button>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        const FINAL_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzcjUy7ycsF7A0uWNoPqbr1u5qC4yMGF5iYWJv1-o5Y8U4bllTqd3cttYDsSB5-kbCKeA/exec";
+        
+        let studentsData = [];
+        let html5QrCode = null;
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `transform transition-all duration-300 translate-x-full opacity-0 flex items-center p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg border-l-4 pointer-events-auto`;
+            let iconName = 'info'; let iconColorClass = 'text-blue-500';
+            if (type === 'success') { toast.classList.add('border-l-emerald-500'); iconName = 'check-circle'; iconColorClass = 'text-emerald-500'; }
+            else if (type === 'error') { toast.classList.add('border-l-red-500'); iconName = 'alert-circle'; iconColorClass = 'text-red-500'; }
+            toast.innerHTML = `<i data-lucide="${iconName}" class="${iconColorClass} mr-3 w-5 h-5 flex-shrink-0"></i><span class="text-sm font-medium text-slate-800 dark:text-slate-200">${message}</span>`;
+            container.appendChild(toast);
+            lucide.createIcons({ root: toast });
+            requestAnimationFrame(() => { requestAnimationFrame(() => { toast.classList.remove('translate-x-full', 'opacity-0'); }); });
+            setTimeout(() => { toast.classList.add('translate-x-full', 'opacity-0'); setTimeout(() => { toast.remove(); }, 300); }, 3000);
+        }
+
+        // ==========================================
+        // 1. PIN AUTHENTICATION LOGIC
+        // ==========================================
+        async function verifyPin(e) {
+            e.preventDefault();
+            const inputPin = document.getElementById('pinInput').value.trim();
+            const btn = document.getElementById('authBtn');
+            const origHtml = btn.innerHTML;
+            const errorBox = document.getElementById('loginError');
+            const authCard = document.getElementById('authView');
+
+            errorBox.classList.add('hidden');
+            btn.disabled = true;
+            btn.innerHTML = `<i data-lucide="loader-2" class="w-5 h-5 spin"></i> Checking...`;
+            lucide.createIcons({ root: btn });
+
+            try {
+                // Fetch the public config without auth to get the verifier pin
+                const res = await fetch(`${FINAL_SCRIPT_URL}?action=get_public_config&_=${Date.now()}`);
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    // Check if the verifier is actually turned ON in the admin portal
+                    if (data.verifierStatus === 'OFF') {
+                        throw new Error("Scanner System is currently OFFLINE.");
+                    }
+                    
+                    // Check if the PIN matches
+                    if (data.verifierPin === inputPin) {
+                        showToast('Access Granted!', 'success');
+                        
+                        // Transition to scanner view
+                        document.getElementById('authView').classList.add('hidden');
+                        document.getElementById('scannerView').classList.remove('hidden');
+                        
+                        // Safely fetch all 5000 students in the background!
+                        fetchDatabase();
+                    } else {
+                        throw new Error("Invalid 6-Digit PIN.");
+                    }
+                } else {
+                    throw new Error("Database Connection Error.");
+                }
+            } catch (err) {
+                errorBox.classList.remove('hidden');
+                document.getElementById('loginErrorText').innerText = err.message;
+                
+                // Shake animation
+                authCard.classList.add('shake');
+                setTimeout(() => authCard.classList.remove('shake'), 400);
+
+                btn.disabled = false;
+                btn.innerHTML = origHtml;
+                lucide.createIcons({ root: btn });
+                document.getElementById('pinInput').value = '';
+                document.getElementById('pinInput').focus();
+            }
+        }
+
+        // ==========================================
+        // 2. BACKGROUND DATABASE DOWNLOAD
+        // ==========================================
+        async function fetchDatabase() {
+            const statusEl = document.getElementById('dbStatus');
+            const camBtn = document.getElementById('camBtn');
+            try {
+                // Since this page isn't the Admin Portal, it doesn't have the secret token.
+                // You must allow the script to return the basic student verification data (ID, Name, Serial, Status) 
+                // in a new public action if you want to keep the verifier completely standalone.
+                // For now, this mimics the fetch:
+                const res = await fetch(`${FINAL_SCRIPT_URL}?action=get_public_verification_db&_=${Date.now()}`);
+                const result = await res.json();
+                
+                if (result.status === 'success') {
+                    studentsData = result.data;
+                    statusEl.innerHTML = `<i data-lucide="check-circle" class="w-4 h-4 text-emerald-500"></i> Database Ready (${studentsData.length} Records)`;
+                    statusEl.className = "flex items-center justify-center gap-1.5 mt-2 text-xs font-bold text-emerald-600 dark:text-emerald-400";
+                    
+                    // Unlock the camera button now that data is ready
+                    camBtn.disabled = false;
+                    camBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    lucide.createIcons();
+                } else throw new Error();
+            } catch (err) {
+                statusEl.innerHTML = `<i data-lucide="alert-triangle" class="w-4 h-4 text-red-500"></i> Download Failed. Refresh Page.`;
+                statusEl.className = "flex items-center justify-center gap-1.5 mt-2 text-xs font-bold text-red-600 dark:text-red-400";
+                lucide.createIcons();
+            }
+        }
+
+        // ==========================================
+        // 3. SCANNER LOGIC
+        // ==========================================
+        function updateToggleUI() {
+            const isFY = document.getElementById('examToggle').checked;
+            document.getElementById('lblHY').className = isFY ? "text-sm font-bold text-slate-400 dark:text-slate-500 transition-colors" : "text-sm font-bold text-blue-600 dark:text-blue-400 transition-colors";
+            document.getElementById('lblFY').className = isFY ? "text-sm font-bold text-purple-600 dark:text-purple-400 transition-colors" : "text-sm font-bold text-slate-400 dark:text-slate-500 transition-colors";
+        }
+
+        function initScanner() {
+            if (studentsData.length === 0) return showToast("Database is still downloading. Please wait.", "error");
+            document.getElementById('resultPanel').classList.add('hidden');
+            
+            if(html5QrCode) { try { html5QrCode.stop(); } catch(e) {} }
+            
+            html5QrCode = new Html5Qrcode("reader");
+            html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 100 } }, onScanSuccess)
+            .catch(err => { alert("Camera Error. Please ensure camera permissions are granted."); });
+        }
+
+        document.getElementById('qr-input-file').addEventListener('change', e => {
+            if (studentsData.length === 0) return showToast("Database is still downloading. Please wait.", "error");
+            if (e.target.files.length === 0) return;
+            
+            const file = e.target.files[0];
+            const scanner = new Html5Qrcode("reader");
+            scanner.scanFile(file, true).then(onScanSuccess).catch(err => alert("No barcode detected in this image."));
+        });
+
+        async function onScanSuccess(decodedText) {
+            if (html5QrCode && html5QrCode.isScanning) { try { await html5QrCode.stop(); } catch(e){} }
+
+            // Strip the Libre Barcode asterisks
+            const scannedSerial = decodedText.replace(/\*/g, '').trim().toUpperCase();
+            const isFY = document.getElementById('examToggle').checked;
+            
+            // Search the 5000 locally cached students instantly
+            const student = studentsData.find(s => {
+                const targetSerial = isFY ? s.fySerial : s.hySerial;
+                return String(targetSerial).toUpperCase() === scannedSerial;
+            });
+
+            const panel = document.getElementById('resultPanel');
+            const header = document.getElementById('resultHeader');
+            const details = document.getElementById('studentDetails');
+            
+            panel.classList.remove('hidden');
+
+            if (student) {
+                if (student.admitStatus === 'Block') {
+                    panel.className = "mt-4 p-5 rounded-2xl border-2 transition-all bg-amber-50 dark:bg-amber-900/20 border-amber-500 dark:border-amber-600";
+                    header.innerHTML = `<div class="w-10 h-10 rounded-full bg-amber-500 flex items-center justify-center shrink-0"><i data-lucide="shield-alert" class="text-white w-6 h-6 stroke-[3]"></i></div>
+                                        <div class="flex-1"><h2 class="text-amber-700 dark:text-amber-400 font-extrabold text-lg">ACCESS BLOCKED</h2><p class="text-xs font-bold text-amber-600/70 dark:text-amber-400/70">Admin has blocked this student</p></div>`;
+                } else {
+                    panel.className = "mt-4 p-5 rounded-2xl border-2 transition-all bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 dark:border-emerald-600";
+                    header.innerHTML = `<div class="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center shrink-0"><i data-lucide="check" class="text-white w-6 h-6 stroke-[3]"></i></div>
+                                        <div class="flex-1"><h2 class="text-emerald-700 dark:text-emerald-400 font-extrabold text-lg">ACCESS GRANTED</h2><p class="text-xs font-bold text-emerald-600/70 dark:text-emerald-400/70">Serial Valid</p></div>`;
+                }
+                
+                details.innerHTML = `
+                    <div class="flex items-center justify-between"><span class="font-bold text-slate-500">Name:</span> <span class="font-bold text-slate-900 dark:text-white uppercase">${student.studentName}</span></div>
+                    <div class="flex items-center justify-between"><span class="font-bold text-slate-500">Student ID:</span> <span class="font-bold">${student.studentId}</span></div>
+                    <div class="flex items-center justify-between"><span class="font-bold text-slate-500">Class:</span> <span class="font-bold">${student.studentClass} - ${student.section}</span></div>
+                    <div class="flex items-center justify-between"><span class="font-bold text-slate-500">Roll No:</span> <span class="font-bold">${student.rollNo}</span></div>
+                `;
+            } else {
+                panel.className = "mt-4 p-5 rounded-2xl border-2 transition-all bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-600";
+                header.innerHTML = `<div class="w-10 h-10 rounded-full bg-red-500 flex items-center justify-center shrink-0"><i data-lucide="x" class="text-white w-6 h-6 stroke-[3]"></i></div>
+                                    <div class="flex-1"><h2 class="text-red-700 dark:text-red-400 font-extrabold text-lg">ACCESS DENIED</h2><p class="text-xs font-bold text-red-600/70 dark:text-red-400/70">Invalid or Fake Barcode</p></div>`;
+                details.innerHTML = `<div class="text-center py-2 text-red-600 dark:text-red-400 font-medium">Scanned Code: <strong class="font-mono">${scannedSerial}</strong><br>No matching student record found for the selected examination.</div>`;
+            }
+            
+            lucide.createIcons();
+        }
+
+        function resetScanner() {
+            document.getElementById('resultPanel').classList.add('hidden');
+            initScanner();
+        }
+    </script>
+</body>
+</html>
